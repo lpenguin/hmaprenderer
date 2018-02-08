@@ -132,8 +132,11 @@ int main() {
 //    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE); // To make MacOS happy; should not be needed
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE); // Мы не хотим старый OpenGL
 
+    const auto width = 1024;
+    const auto height = 768;
+
     GLFWwindow *window; // (В сопроводительном исходном коде эта переменная является глобальной)
-    window = glfwCreateWindow(1024, 768, "Tutorial 01", nullptr, nullptr);
+    window = glfwCreateWindow(width, height, "Tutorial 01", nullptr, nullptr);
     if (window == nullptr) {
 
         glfwTerminate();
@@ -151,15 +154,15 @@ int main() {
     printf("after : %d\n", glGetError());
     glfwSetInputMode(window, GLFW_STICKY_KEYS, GL_TRUE);
 
-    auto height = read_image("height.map");
-    GLuint texture_height = texture_from_image(height);
+    auto heightMap = read_image("height.map");
+    GLuint heightMapTexture = texture_from_image(heightMap);
 
 
-    auto image = read_image("color.map");
-    GLuint texture = texture_from_image(image);
+    auto colorMap = read_image("color.map");
+    GLuint colorMapTexture = texture_from_image(colorMap);
 
     auto palette = read_image("fostral.pal", 256 , 1, Format::ImageRGB);
-    GLuint texturePalette = texture_from_image(palette);
+    GLuint paletteTexture = texture_from_image(palette);
 
 
     // Dark blue background
@@ -179,28 +182,45 @@ int main() {
     GLuint programID = LoadShaders("heightmap.vert", "heightmap.frag");
 
     // Get a handle for our "MVP" uniform
-    GLint MatrixID = glGetUniformLocation(programID, "MVP");
     // Projection matrix : 45° Field of View, 4:3 ratio, display range : 0.1 unit <-> 100 units
     glm::mat4 Projection = glm::perspective(glm::radians(45.0f), 4.0f / 3.0f, 0.1f, 100.0f);
     // Camera matrix
+    glm::vec4 camPos = glm::vec4(0.5, -1, 1, 1.0);
+    glm::vec4 screenSize = glm::vec4(heightMap->width/1024.0f, heightMap->height/1024.0f, 0.0f, 0.0f);
+    float realHeight;
+    if(heightMap->height > 4096){
+        realHeight = 4096;
+    }else {
+        realHeight = heightMap->height;
+    }
+    float numLayers = heightMap->height / realHeight;
+
+    glm::vec4 terrainScale = glm::vec4(heightMap->width, realHeight, 48,numLayers);
+
     glm::mat4 View       = glm::lookAt(
-            glm::vec3(1,0,1), // Camera is at (4,3,3), in World Space
-            glm::vec3(1,1,0), // and looks at the origin
+            glm::vec3(camPos), // Camera is at (4,3,3), in World Space
+            glm::vec3(0.5,1,0), // and looks at the origin
             glm::vec3(0,1,0)  // Head is up (set to 0,-1,0 to look upside-down)
     );
     // Model matrix : an identity matrix (model will be at the origin)
     glm::mat4 Model      = glm::mat4(1.0f);
-    // Our ModelViewProjection : multiplication of our 3 matrices
     glm::mat4 MVP        = Projection * View * Model; // Remember, matrix multiplication is the other way around
-
+    glm::mat4 MVP_inv = glm::inverse(MVP);
 
 //    GLint TextureID  = glGetUniformLocation(programID, "myTextureSampler");
-    GLint TextureID  = glGetUniformLocation(programID, "myTextureSampler");
-    GLint TextureIDpalette  = glGetUniformLocation(programID, "paletteSampler");
+    GLint colorMapTextureID  = glGetUniformLocation(programID, "t_Color");
+    GLint heightMapTextureID  = glGetUniformLocation(programID, "t_Height");
+    GLint paletteTextureID  = glGetUniformLocation(programID, "t_Palette");
+
+    GLint u_CamPos_loc = glGetUniformLocation(programID, "u_CamPos");
+    GLint u_ScreenSize_loc = glGetUniformLocation(programID, "u_ScreenSize");
+    GLint u_TextureScale_loc = glGetUniformLocation(programID, "u_TextureScale");
+    GLint u_ViewProj_loc = glGetUniformLocation(programID, "u_ViewProj");
+    GLint u_InvViewProj_loc = glGetUniformLocation(programID, "u_InvViewProj");
 
 
-    const auto unitw = 1.0f * image->width / 1024;
-    const auto unith = 1.0f * image->height / 1024;
+    const auto unitw = 1.0f * colorMap->width / 1024;
+    const auto unith = 1.0f * colorMap->height / 1024;
     const auto zero = 0.0f;
     static const GLfloat g_vertex_buffer_data[] = {
             zero, zero, 0.0f,
@@ -239,17 +259,27 @@ int main() {
         glUseProgram(programID);
 // Send our transformation to the currently bound shader,
         // in the "MVP" uniform
-        glUniformMatrix4fv(MatrixID, 1, GL_FALSE, &MVP[0][0]);
+//        glUniformMatrix4fv(MatrixID, 1, GL_FALSE, &MVP[0][0]);
+        glUniform4fv(u_CamPos_loc, 1, &camPos[0]);
+        glUniform4fv(u_ScreenSize_loc, 1, &screenSize[0]);
+        glUniform4fv(u_TextureScale_loc, 1, &terrainScale[0]);
+        glUniformMatrix4fv(u_ViewProj_loc, 1, GL_FALSE, &MVP[0][0]);
+        glUniformMatrix4fv(u_InvViewProj_loc, 1, GL_FALSE, &MVP_inv[0][0]);
+
+        //        // Bind our texture in Texture Unit 0
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_1D, paletteTexture);
+        glUniform1i(paletteTextureID, 0);
 
         // Bind our texture in Texture Unit 0
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, texture);
-        glUniform1i(TextureID, 0);
-
-//        // Bind our texture in Texture Unit 0
         glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_1D, texturePalette);
-        glUniform1i(TextureIDpalette, 1);
+        glBindTexture(GL_TEXTURE_2D, heightMapTexture);
+        glUniform1i(heightMapTextureID, 1);
+        // Bind our texture in Texture Unit 0
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, colorMapTexture);
+        glUniform1i(colorMapTextureID, 2);
+
 
         // 1rst attribute buffer : vertices
         glEnableVertexAttribArray(0);
@@ -292,7 +322,7 @@ int main() {
     glDeleteBuffers(1, &vertexbuffer);
     glDeleteBuffers(1, &uvbuffer);
     glDeleteProgram(programID);
-    glDeleteTextures(1, &texture);
+    glDeleteTextures(1, &colorMapTexture);
     glDeleteVertexArrays(1, &VertexArrayID);
 
     // Close OpenGL window and terminate GLFW
